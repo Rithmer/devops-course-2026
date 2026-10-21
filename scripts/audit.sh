@@ -43,5 +43,30 @@ KEY_MODE_OWNER=$(sudo stat -c '%a,%U' /etc/ssl/private/devops.key 2>/dev/null ||
 WEB_PERMISSIONS=clear
 [[ "$WORLD_WRITABLE" == yes ]] && WEB_PERMISSIONS=world-writable
 check "Нет записи для всех; ключ root:600" "clear,600,root" "$WEB_PERMISSIONS,$KEY_MODE_OWNER"
+echo "[5] Docker и Compose"
+DOCKER_ACTIVE=no
+if systemctl is-active --quiet docker; then DOCKER_ACTIVE=yes; fi
+check "Служба Docker активна" "yes" "$DOCKER_ACTIVE"
+DB_HEALTH=missing
+APP_CONTAINER=app-app-1
+DB_CONTAINER=app-db-1
+if docker inspect "$DB_CONTAINER" >/dev/null 2>&1; then
+    DB_HEALTH=$(docker inspect --format '{{.State.Health.Status}}' "$DB_CONTAINER" 2>/dev/null || echo unknown)
+fi
+check "Контейнер PostgreSQL app-db-1 готов" "healthy" "$DB_HEALTH"
+APP_BINDING=missing
+if docker inspect "$APP_CONTAINER" >/dev/null 2>&1; then
+    APP_BINDING=$(docker inspect --format '{{with (index .HostConfig.PortBindings "5000/tcp")}}{{printf "%s:%s" (or (index . 0).HostIp "0.0.0.0") (index . 0).HostPort}}{{else}}none{{end}}' "$APP_CONTAINER" 2>/dev/null || echo unknown)
+fi
+check "Порт приложения доступен только с loopback" "127.0.0.1:5000" "$APP_BINDING"
+NO_DB_PUBLISH=yes
+if docker inspect "$DB_CONTAINER" >/dev/null 2>&1; then
+    DB_PUBLISHED=$(docker inspect --format '{{json .HostConfig.PortBindings}}' "$DB_CONTAINER" 2>/dev/null || echo unknown)
+    [[ "$DB_PUBLISHED" != *'5432/tcp'* ]] || NO_DB_PUBLISH=no
+fi
+check "Порт PostgreSQL не опубликован на хосте" "yes" "$NO_DB_PUBLISH"
+ENV_MODE=missing
+if [[ -f "$HOME/app/.env" ]]; then ENV_MODE=$(stat -c '%a' "$HOME/app/.env" 2>/dev/null || echo unknown); fi
+check "Файл app/.env имеет права 600" "600" "$ENV_MODE"
 echo "Пройдено: $PASS, не пройдено: $FAIL"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
