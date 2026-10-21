@@ -284,3 +284,41 @@ curl --cacert ~/devops.crt --resolve devops.local:443:192.168.56.2 https://devop
 ```
 
 UFW разрешает входящие TCP-порты 80 и 443; SSH остаётся ограниченным правилом LIMIT на порту 2222.
+
+## 9. Docker-приложение за обратным прокси
+
+Docker Engine и Compose Plugin установлены из официального репозитория Docker для Ubuntu ARM64. Проект приложения находится на VM в `~/app`; конфигурация Compose запускает сервисы `app` и `db` в сети `backend`. PostgreSQL хранит данные в именованном томе `app_db_data`, а порт 5432 не публикуется на хосте. Переменные окружения находятся в `~/app/.env` с правами 600; в Git хранится только `app/.env.example`.
+
+Контейнер приложения работает от пользователя `app`. Его порт 5000 опубликован только на loopback VM (`127.0.0.1:5000`), а доступ с Mac к сайту выполняется через HTTPS и Nginx. Приложение доступно по адресу `https://devops.local/app/`; проверка состояния — `https://devops.local/app/health`.
+
+В HTTPS-блоке `/etc/nginx/sites-available/devops-site` настроен обратный прокси:
+
+```nginx
+location /app/ {
+    proxy_pass http://127.0.0.1:5000/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+Завершающий `/` в `proxy_pass` удаляет префикс `/app/` перед передачей URI Flask-приложению. После изменения проверяются конфигурация и служба Nginx:
+
+```bash
+sudo nginx -t
+sudo systemctl reload nginx
+systemctl is-active nginx
+```
+
+С Mac проверить приложение через HTTPS с сертификатом VM:
+
+```bash
+curl --cacert ~/devops.crt --resolve devops.local:443:192.168.56.2 https://devops.local/app/
+curl --cacert ~/devops.crt --resolve devops.local:443:192.168.56.2 https://devops.local/app/health
+curl --cacert ~/devops.crt --resolve devops.local:443:192.168.56.2 https://devops.local/
+```
+
+Для демонстрации обхода UFW временный контейнер можно опубликовать на всех интерфейсах VM на порту 5001. Проверка с Mac по `http://192.168.56.2:5001/health` показывает, что опубликованный Docker-порт доступен напрямую, хотя входящий порт 5001 не разрешён в UFW. После проверки контейнер удаляется; рабочий Compose-сервис остаётся привязанным к `127.0.0.1:5000`.
+
+Если остановить Compose-приложение, HTTPS-маршрут `/app/` возвращает 502, а причина фиксируется в журнале Nginx. После запуска Compose-сервиса маршрут снова отвечает. Скрипт `scripts/audit.sh`, переданный на VM как `~/scripts/audit.sh`, дополнительно проверяет активность Docker, состояние `healthy` PostgreSQL, привязку приложения к loopback, отсутствие опубликованного порта 5432 и права 600 у `~/app/.env`.
