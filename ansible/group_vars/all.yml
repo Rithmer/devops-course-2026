@@ -1,0 +1,7 @@
+---
+# Verified GHCR image and full commit SHA from the running VM's local image list.
+app_image: "ghcr.io/rithmer/devops-ci-app"
+app_tag: "6d7b486cac8aac0669ff45f4c51dc2cfbafb6883"
+app_container_name: "devops-ci-app"
+app_host_port: 5000
+app_internal_port: 5000
